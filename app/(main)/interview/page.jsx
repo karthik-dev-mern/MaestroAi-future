@@ -1,11 +1,15 @@
+import { headers } from 'next/headers';
 import { getAssessments } from "@/actions/interview";
 import StatsCards from "./_components/stats-cards";
 import PerformanceChart from "./_components/performace-chart";
 import QuizList from "./_components/quiz-list";
 
+export const revalidate = 0;
 export const dynamic = 'force-dynamic';
+export const fetchCache = 'force-no-store';
 
 export default async function InterviewPrepPage() {
+  headers(); // This ensures the page is dynamic
   const assessments = await getAssessments();
 
   return (
