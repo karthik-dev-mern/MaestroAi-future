@@ -37,78 +37,78 @@ export const generateAIInsights = async (industry) => {
 };
 
 export async function getIndustryInsights() {
-  const { userId } = await auth();
-  if (!userId) throw new Error("Unauthorized");
-
-  // Get the current user from Clerk
-  const clerkUser = await currentUser();
-  if (!clerkUser) throw new Error("No Clerk user found");
-
   try {
-    // Try to find the user in our database
-    let user = await db.user.findUnique({
-      where: { clerkUserId: userId },
-      include: {
-        industryInsight: true,
-      },
-    });
-
-    // If user doesn't exist in our database, create them
-    if (!user) {
-      user = await db.user.create({
-        data: {
-          clerkUserId: userId,
-          email: clerkUser.emailAddresses[0].emailAddress,
-          name: `${clerkUser.firstName || ""} ${clerkUser.lastName || ""}`.trim(),
-          imageUrl: clerkUser.imageUrl,
-          skills: [],
-        },
-        include: {
-          industryInsight: true,
-        },
-      });
-      console.log("[USER_CREATED_IN_INSIGHTS]", { userId, email: clerkUser.emailAddresses[0].emailAddress });
+    const { userId } = await auth();
+    if (!userId) {
+      throw new Error("Unauthorized");
     }
 
-    // If user has no industry selected yet
-    if (!user.industry) {
-      return {
-        message: "Please select your industry in your profile first",
-        data: null,
+    // Get the current user from Clerk
+    const clerkUser = await currentUser();
+    if (!clerkUser) {
+      throw new Error("No Clerk user found");
+    }
+
+    // Get user's industry
+    const user = await db.user.findFirst({
+      where: { clerkUserId: userId },
+      select: { industry: true },
+    });
+
+    if (!user?.industry) {
+      return null; // Return null if user hasn't selected an industry
+    }
+
+    // Get industry insights
+    const insights = await db.industryInsight.findFirst({
+      where: { industry: user.industry },
+    });
+
+    if (!insights) {
+      // If no insights exist, generate default insights
+      const defaultInsights = {
+        industry: user.industry,
+        salaryRanges: [],
+        growthRate: 0,
+        demandLevel: "Not Available",
+        topSkills: [],
+        marketOutlook: "Not Available",
+        keyTrends: [],
+        recommendedSkills: [],
+        lastUpdated: new Date(),
+        nextUpdate: new Date(),
       };
+
+      // Create default insights in database
+      return await db.industryInsight.create({
+        data: defaultInsights,
+      });
     }
 
     // Check if industry insights need to be updated
-    if (!user.industryInsight || new Date() > new Date(user.industryInsight.nextUpdate)) {
-      const insights = await generateAIInsights(user.industry);
-      
-      const updatedInsight = await db.industryInsight.upsert({
-        where: {
-          industry: user.industry,
-        },
-        update: {
-          ...insights,
-          nextUpdate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 days from now
-        },
-        create: {
-          industry: user.industry,
-          ...insights,
-          nextUpdate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
-        },
-      });
-
-      return {
-        message: "Industry insights updated successfully",
-        data: updatedInsight,
-      };
+    if (!insights.nextUpdate || new Date() > new Date(insights.nextUpdate)) {
+      try {
+        const newInsights = await generateAIInsights(user.industry);
+        await db.industryInsight.update({
+          where: { industry: user.industry },
+          data: {
+            ...newInsights,
+            nextUpdate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 days from now
+          },
+        });
+        return await db.industryInsight.findFirst({ where: { industry: user.industry } });
+      } catch (error) {
+        console.error("Error generating new industry insights:", error);
+      }
     }
 
-    return {
-      message: "Industry insights retrieved successfully",
-      data: user.industryInsight,
-    };
+    return insights;
   } catch (error) {
-    console.error("Error getting industry insights:", error);
-    throw new Error("Failed to get industry insights");
+    console.error("Error in getIndustryInsights:", {
+      message: error.message,
+      code: error.code,
+      stack: error.stack,
+    });
+    throw error;
   }
 }

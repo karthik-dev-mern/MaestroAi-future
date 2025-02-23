@@ -153,7 +153,7 @@ export async function saveQuizResult(questions, answers, score) {
   }
 }
 
-export async function getAssessments() {
+export async function checkUser() {
   const { userId } = await auth();
   if (!userId) throw new Error("Unauthorized");
 
@@ -194,19 +194,36 @@ export async function getAssessments() {
       }
     }
 
-    // Now get the assessments
+    return user;
+  } catch (error) {
+    console.error("Error in checkUser:", error);
+    throw error;
+  }
+}
+
+export async function getAssessments() {
+  try {
+    const user = await checkUser();
+    if (!user) {
+      throw new Error("User not found");
+    }
+
     const assessments = await db.assessment.findMany({
       where: {
         userId: user.id,
       },
       orderBy: {
-        createdAt: "asc",
+        createdAt: "desc",
       },
     });
 
-    return assessments;
+    return assessments || [];
   } catch (error) {
-    console.error("Error in getAssessments:", error);
-    throw new Error(error.message || "Failed to fetch assessments");
+    console.error("Error in getAssessments:", {
+      message: error.message,
+      code: error.code,
+      stack: error.stack
+    });
+    throw error;
   }
 }
