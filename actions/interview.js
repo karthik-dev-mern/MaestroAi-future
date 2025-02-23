@@ -1,74 +1,87 @@
 "use server";
 
 import { db } from "@/lib/prisma";
-import { auth, currentUser } from "@clerk/nextjs/server";
+import { auth } from "@clerk/nextjs/server";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
+
+export async function getAssessments() {
+  try {
+    const { userId } = await auth();
+    if (!userId) {
+      return [];
+    }
+
+    const assessments = await db.assessment.findMany({
+      where: {
+        user: {
+          clerkUserId: userId
+        }
+      },
+      orderBy: {
+        createdAt: 'desc'
+      },
+      include: {
+        questions: true
+      }
+    });
+
+    return assessments;
+  } catch (error) {
+    console.error("Error fetching assessments:", error);
+    return [];
+  }
+}
 
 export async function generateQuiz() {
-  const { userId } = await auth();
-  if (!userId) throw new Error("Unauthorized");
+  try {
+    const { userId } = await auth();
+    if (!userId) {
+      throw new Error("Please sign in to continue");
+    }
 
-  // Get the current user from Clerk
-  const clerkUser = await currentUser();
-  if (!clerkUser) throw new Error("No Clerk user found");
-
-  // Try to find the user in our database
-  let user = await db.user.findUnique({
-    where: { clerkUserId: userId },
-    select: {
-      industry: true,
-      skills: true,
-    },
-  });
-
-  // If user doesn't exist in our database, create them
-  if (!user) {
-    user = await db.user.create({
-      data: {
-        clerkUserId: userId,
-        email: clerkUser.emailAddresses[0].emailAddress,
-        name: `${clerkUser.firstName || ""} ${clerkUser.lastName || ""}`.trim(),
-        imageUrl: clerkUser.imageUrl,
-        skills: [],
-      },
+    // Try to find the user in our database
+    const user = await db.user.findUnique({
+      where: { clerkUserId: userId },
       select: {
         industry: true,
         skills: true,
       },
     });
-    console.log("[USER_CREATED_IN_QUIZ]", { userId, email: clerkUser.emailAddresses[0].emailAddress });
-  }
 
-  if (!user.industry && (!user.skills || user.skills.length === 0)) {
-    throw new Error("Please complete your profile with industry and skills first");
-  }
-
-  const prompt = `
-    Generate 10 technical interview questions for a ${
-      user.industry
-    } professional${
-    user.skills?.length ? ` with expertise in ${user.skills.join(", ")}` : ""
-  }.
-    
-    Each question should be multiple choice with 4 options.
-    
-    Return the response in this JSON format only, no additional text:
-    {
-      "questions": [
-        {
-          "question": "string",
-          "options": ["string", "string", "string", "string"],
-          "correctAnswer": "string",
-          "explanation": "string"
-        }
-      ]
+    if (!user) {
+      throw new Error("Please complete your profile first");
     }
-  `;
 
-  try {
+    if (!user.industry || !user.skills?.length) {
+      throw new Error("Please complete your profile with industry and skills first");
+    }
+
+    if (!process.env.GEMINI_API_KEY) {
+      throw new Error("AI service is temporarily unavailable");
+    }
+
+    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+    
+    const prompt = `
+      Generate 10 technical interview questions for a ${user.industry} professional with expertise in ${user.skills.join(", ")}.
+      
+      Each question should be multiple choice with 4 options.
+      
+      Return the response in this JSON format only, no additional text:
+      {
+        "questions": [
+          {
+            "question": "string",
+            "options": ["string", "string", "string", "string"],
+            "correctAnswer": "string",
+            "explanation": "string"
+          }
+        ]
+      }
+    `;
+
     const result = await model.generateContent(prompt);
     const response = result.response;
     const text = response.text();
@@ -78,152 +91,52 @@ export async function generateQuiz() {
     return quiz.questions;
   } catch (error) {
     console.error("Error generating quiz:", error);
-    throw new Error("Failed to generate quiz questions");
+    if (error.message.includes("API key")) {
+      throw new Error("AI service is temporarily unavailable");
+    }
+    throw error;
   }
 }
 
 export async function saveQuizResult(questions, answers, score) {
-  const { userId } = await auth();
-  if (!userId) throw new Error("Unauthorized");
-
-  const user = await db.user.findUnique({
-    where: { clerkUserId: userId },
-  });
-
-  if (!user) throw new Error("User not found");
-
-  const questionResults = questions.map((q, index) => ({
-    question: q.question,
-    answer: q.correctAnswer,
-    userAnswer: answers[index],
-    isCorrect: q.correctAnswer === answers[index],
-    explanation: q.explanation,
-  }));
-
-  // Get wrong answers
-  const wrongAnswers = questionResults.filter((q) => !q.isCorrect);
-
-  // Only generate improvement tips if there are wrong answers
-  let improvementTip = null;
-  if (wrongAnswers.length > 0) {
-    const wrongQuestionsText = wrongAnswers
-      .map(
-        (q) =>
-          `Question: "${q.question}"\nCorrect Answer: "${q.answer}"\nUser Answer: "${q.userAnswer}"`
-      )
-      .join("\n\n");
-
-    const improvementPrompt = `
-      The user got the following ${user.industry} technical interview questions wrong:
-
-      ${wrongQuestionsText}
-
-      Based on these mistakes, provide a concise, specific improvement tip.
-      Focus on the knowledge gaps revealed by these wrong answers.
-      Keep the response under 2 sentences and make it encouraging.
-      Don't explicitly mention the mistakes, instead focus on what to learn/practice.
-    `;
-
-    try {
-      const tipResult = await model.generateContent(improvementPrompt);
-
-      improvementTip = tipResult.response.text().trim();
-      console.log(improvementTip);
-    } catch (error) {
-      console.error("Error generating improvement tip:", error);
-      // Continue without improvement tip if generation fails
-    }
-  }
-
   try {
+    const { userId } = await auth();
+    if (!userId) {
+      throw new Error("Please sign in to continue");
+    }
+
+    const user = await db.user.findUnique({
+      where: { clerkUserId: userId },
+    });
+
+    if (!user) {
+      throw new Error("Please complete your profile first");
+    }
+
+    const questionResults = questions.map((q, index) => ({
+      question: q.question,
+      answer: q.correctAnswer,
+      userAnswer: answers[index],
+      isCorrect: q.correctAnswer === answers[index],
+      explanation: q.explanation,
+    }));
+
     const assessment = await db.assessment.create({
       data: {
+        score,
         userId: user.id,
-        quizScore: score,
-        questions: questionResults,
-        category: "Technical",
-        improvementTip,
+        questions: {
+          create: questionResults
+        }
       },
+      include: {
+        questions: true
+      }
     });
 
     return assessment;
   } catch (error) {
     console.error("Error saving quiz result:", error);
-    throw new Error("Failed to save quiz result");
-  }
-}
-
-export async function checkUser() {
-  const { userId } = await auth();
-  if (!userId) throw new Error("Unauthorized");
-
-  // Get the current user from Clerk
-  const clerkUser = await currentUser();
-  if (!clerkUser) throw new Error("No Clerk user found");
-
-  try {
-    // First try to find user by Clerk ID
-    let user = await db.user.findUnique({
-      where: { clerkUserId: userId },
-    });
-
-    // If not found by Clerk ID, try by email
-    if (!user) {
-      const email = clerkUser.emailAddresses[0].emailAddress;
-      user = await db.user.findUnique({
-        where: { email: email },
-      });
-
-      // If found by email, update the clerkUserId
-      if (user) {
-        user = await db.user.update({
-          where: { email: email },
-          data: { clerkUserId: userId },
-        });
-      } else {
-        // If user doesn't exist at all, create new
-        user = await db.user.create({
-          data: {
-            clerkUserId: userId,
-            email: email,
-            name: `${clerkUser.firstName || ""} ${clerkUser.lastName || ""}`.trim(),
-            imageUrl: clerkUser.imageUrl,
-            skills: [],
-          },
-        });
-      }
-    }
-
-    return user;
-  } catch (error) {
-    console.error("Error in checkUser:", error);
-    throw error;
-  }
-}
-
-export async function getAssessments() {
-  try {
-    const user = await checkUser();
-    if (!user) {
-      throw new Error("User not found");
-    }
-
-    const assessments = await db.assessment.findMany({
-      where: {
-        userId: user.id,
-      },
-      orderBy: {
-        createdAt: "desc",
-      },
-    });
-
-    return assessments || [];
-  } catch (error) {
-    console.error("Error in getAssessments:", {
-      message: error.message,
-      code: error.code,
-      stack: error.stack
-    });
-    throw error;
+    throw new Error("Failed to save quiz results");
   }
 }
