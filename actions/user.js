@@ -1,7 +1,7 @@
 "use server";
 
 import { db } from "@/lib/prisma";
-import { auth, currentUser } from "@clerk/nextjs/server";
+import { auth } from "@clerk/nextjs";
 import { revalidatePath } from "next/cache";
 import { generateAIInsights } from "./dashboard";
 
@@ -10,7 +10,7 @@ export async function updateUser(data) {
   if (!userId) throw new Error("Unauthorized");
 
   // Get the current user from Clerk
-  const clerkUser = await currentUser();
+  const clerkUser = await auth.currentUser();
   if (!clerkUser) throw new Error("No Clerk user found");
 
   try {
@@ -99,9 +99,32 @@ export async function updateUser(data) {
   }
 }
 
+export async function updateUserProfile(data) {
+  try {
+    const { userId } = await auth();
+    if (!userId) {
+      throw new Error("Unauthorized");
+    }
+
+    const user = await db.user.update({
+      where: { clerkUserId: userId },
+      data: {
+        industry: data.industry,
+        experience: parseInt(data.experience),
+        skills: data.skills,
+      },
+    });
+
+    return { success: true, user };
+  } catch (error) {
+    console.error("Error updating user profile:", error);
+    throw new Error("Failed to update profile");
+  }
+}
+
 export async function getUserOnboardingStatus() {
   try {
-    const clerkUser = await currentUser();
+    const clerkUser = await auth.currentUser();
     if (!clerkUser) {
       return { isOnboarded: false, error: "No authenticated user found" };
     }

@@ -1,4 +1,4 @@
-import { currentUser } from "@clerk/nextjs";
+import { auth } from "@clerk/nextjs";
 import { redirect } from "next/navigation";
 import { db } from "@/lib/prisma";
 import OnboardingForm from "./_components/onboarding-form";
@@ -8,15 +8,15 @@ export const revalidate = 0;
 
 export default async function OnboardingPage() {
   try {
-    const user = await currentUser();
+    const { userId } = await auth();
     
-    if (!user) {
+    if (!userId) {
       redirect("/sign-in");
     }
 
     // Check if user already exists and is onboarded
     const dbUser = await db.user.findUnique({
-      where: { clerkUserId: user.id },
+      where: { clerkUserId: userId },
       select: { industry: true }
     });
 
