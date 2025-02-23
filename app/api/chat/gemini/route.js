@@ -1,7 +1,7 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { NextResponse } from "next/server";
 
-// Use the existing GOOGLE_API_KEY from your environment
+// Use the existing GEMINI_API_KEY from your environment
 const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
 
 const getPromptForType = (type, userMessage) => {
@@ -25,23 +25,34 @@ export async function POST(req) {
   try {
     const { message, type } = await req.json();
     
+    if (!message || !type) {
+      return new NextResponse("Message and type are required", { status: 400 });
+    }
+
     if (!process.env.GOOGLE_API_KEY) {
-      throw new Error("GOOGLE_API_KEY is not configured");
+      console.error("[GEMINI_ERROR] Missing API key");
+      return new NextResponse("API configuration error", { status: 500 });
     }
     
-    const model = genAI.getGenerativeModel({ model: "gemini-pro" });
-    
-    const prompt = getPromptForType(type, message);
-    const result = await model.generateContent(prompt);
-    const response = await result.response;
-    const text = response.text();
-    
-    return NextResponse.json({ response: text });
+    try {
+      const model = genAI.getGenerativeModel({ model: "gemini-pro" });
+      const prompt = getPromptForType(type, message);
+      
+      const result = await model.generateContent(prompt);
+      const response = await result.response;
+      const text = response.text();
+      
+      if (!text) {
+        throw new Error("Empty response from Gemini");
+      }
+
+      return NextResponse.json({ response: text, success: true });
+    } catch (aiError) {
+      console.error("[GEMINI_AI_ERROR]", aiError);
+      return new NextResponse("Error generating AI response", { status: 500 });
+    }
   } catch (error) {
-    console.error("[GEMINI_ERROR]", error);
-    return NextResponse.json(
-      { error: "Failed to get response from AI" },
-      { status: 500 }
-    );
+    console.error("[GEMINI_POST]", error);
+    return new NextResponse("Internal Error", { status: 500 });
   }
 }
