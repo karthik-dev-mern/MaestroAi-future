@@ -2,7 +2,7 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 import { NextResponse } from "next/server";
 
 // Use the existing GEMINI_API_KEY from your environment
-const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 const getPromptForType = (type, userMessage) => {
   const basePrompt = "You are a career advisor AI assistant. Keep your response concise, between 3-4 sentences. ";
@@ -29,7 +29,7 @@ export async function POST(req) {
       return new NextResponse("Message and type are required", { status: 400 });
     }
 
-    if (!process.env.GOOGLE_API_KEY) {
+    if (!process.env.GEMINI_API_KEY) {
       console.error("[GEMINI_ERROR] Missing API key");
       return new NextResponse("API configuration error", { status: 500 });
     }
