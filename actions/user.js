@@ -100,63 +100,28 @@ export async function updateUser(data) {
 }
 
 export async function getUserOnboardingStatus() {
-  const { userId } = await auth();
-  if (!userId) throw new Error("Unauthorized");
-
   try {
-    // Get the current user from Clerk
     const clerkUser = await currentUser();
-    if (!clerkUser) throw new Error("No Clerk user found");
+    if (!clerkUser) {
+      return { isOnboarded: false, error: "No authenticated user found" };
+    }
 
     // First try to find user by Clerk ID
-    let user = await db.user.findUnique({
-      where: { clerkUserId: userId },
-      select: {
-        industry: true,
+    const user = await db.user.findUnique({
+      where: {
+        clerkUserId: clerkUser.id,
       },
     });
 
-    // If not found by Clerk ID, try by email
-    if (!user) {
-      const email = clerkUser.emailAddresses[0].emailAddress;
-      user = await db.user.findUnique({
-        where: { email: email },
-        select: {
-          industry: true,
-        },
-      });
-
-      // If found by email, update the clerkUserId
-      if (user) {
-        user = await db.user.update({
-          where: { email: email },
-          data: { clerkUserId: userId },
-          select: {
-            industry: true,
-          },
-        });
-      } else {
-        // If user doesn't exist at all, create new
-        user = await db.user.create({
-          data: {
-            clerkUserId: userId,
-            email: email,
-            name: `${clerkUser.firstName || ""} ${clerkUser.lastName || ""}`.trim(),
-            imageUrl: clerkUser.imageUrl,
-            skills: [],
-          },
-          select: {
-            industry: true,
-          },
-        });
-      }
+    // If no user found or missing required fields, consider not onboarded
+    if (!user || !user.industry || !user.experience || !user.skills) {
+      return { isOnboarded: false };
     }
 
-    return {
-      isOnboarded: !!user?.industry,
-    };
+    return { isOnboarded: true };
   } catch (error) {
     console.error("Error in getUserOnboardingStatus:", error);
-    throw new Error(error.message || "Failed to check onboarding status");
+    // Return a safe response instead of throwing
+    return { isOnboarded: false, error: "Failed to check onboarding status" };
   }
 }
