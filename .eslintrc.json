@@ -1,12 +1,5 @@
 {
   "extends": ["next/core-web-vitals"],
-  "parser": "@babel/eslint-parser",
-  "parserOptions": {
-    "requireConfigFile": false,
-    "babelOptions": {
-      "presets": ["next/babel"]
-    }
-  },
   "rules": {
     "no-unused-vars": ["warn"]
   }

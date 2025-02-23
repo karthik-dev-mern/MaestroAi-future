@@ -1,19 +1,44 @@
+import { currentUser } from "@clerk/nextjs";
 import { redirect } from "next/navigation";
-import { industries } from "@/data/industries";
+import { db } from "@/lib/prisma";
 import OnboardingForm from "./_components/onboarding-form";
-import { getUserOnboardingStatus } from "@/actions/user";
+
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
 
 export default async function OnboardingPage() {
-  // Check if user is already onboarded
-  const { isOnboarded } = await getUserOnboardingStatus();
+  try {
+    const user = await currentUser();
+    
+    if (!user) {
+      redirect("/sign-in");
+    }
 
-  if (isOnboarded) {
-    redirect("/dashboard");
+    // Check if user already exists and is onboarded
+    const dbUser = await db.user.findUnique({
+      where: { clerkUserId: user.id },
+      select: { industry: true }
+    });
+
+    // If user exists and has industry set, redirect to dashboard
+    if (dbUser?.industry) {
+      redirect("/dashboard");
+    }
+
+    return (
+      <div className="container mx-auto py-10">
+        <OnboardingForm />
+      </div>
+    );
+  } catch (error) {
+    console.error("Error in OnboardingPage:", error);
+    return (
+      <div className="flex items-center justify-center h-screen">
+        <div className="text-center p-8 rounded-lg bg-red-50">
+          <h2 className="text-2xl font-bold text-red-800 mb-4">Something went wrong</h2>
+          <p className="text-red-600">Please refresh the page or try again later.</p>
+        </div>
+      </div>
+    );
   }
-
-  return (
-    <main>
-      <OnboardingForm industries={industries} />
-    </main>
-  );
 }
