@@ -1,7 +1,7 @@
 "use server";
 
 import { db } from "@/lib/prisma";
-import { auth } from "@clerk/nextjs/server";
+import { auth, currentUser } from "@clerk/nextjs/server";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
@@ -11,7 +11,12 @@ export async function generateQuiz() {
   const { userId } = await auth();
   if (!userId) throw new Error("Unauthorized");
 
-  const user = await db.user.findUnique({
+  // Get the current user from Clerk
+  const clerkUser = await currentUser();
+  if (!clerkUser) throw new Error("No Clerk user found");
+
+  // Try to find the user in our database
+  let user = await db.user.findUnique({
     where: { clerkUserId: userId },
     select: {
       industry: true,
@@ -19,7 +24,27 @@ export async function generateQuiz() {
     },
   });
 
-  if (!user) throw new Error("User not found");
+  // If user doesn't exist in our database, create them
+  if (!user) {
+    user = await db.user.create({
+      data: {
+        clerkUserId: userId,
+        email: clerkUser.emailAddresses[0].emailAddress,
+        name: `${clerkUser.firstName || ""} ${clerkUser.lastName || ""}`.trim(),
+        imageUrl: clerkUser.imageUrl,
+        skills: [],
+      },
+      select: {
+        industry: true,
+        skills: true,
+      },
+    });
+    console.log("[USER_CREATED_IN_QUIZ]", { userId, email: clerkUser.emailAddresses[0].emailAddress });
+  }
+
+  if (!user.industry && (!user.skills || user.skills.length === 0)) {
+    throw new Error("Please complete your profile with industry and skills first");
+  }
 
   const prompt = `
     Generate 10 technical interview questions for a ${
@@ -132,13 +157,44 @@ export async function getAssessments() {
   const { userId } = await auth();
   if (!userId) throw new Error("Unauthorized");
 
-  const user = await db.user.findUnique({
-    where: { clerkUserId: userId },
-  });
-
-  if (!user) throw new Error("User not found");
+  // Get the current user from Clerk
+  const clerkUser = await currentUser();
+  if (!clerkUser) throw new Error("No Clerk user found");
 
   try {
+    // First try to find user by Clerk ID
+    let user = await db.user.findUnique({
+      where: { clerkUserId: userId },
+    });
+
+    // If not found by Clerk ID, try by email
+    if (!user) {
+      const email = clerkUser.emailAddresses[0].emailAddress;
+      user = await db.user.findUnique({
+        where: { email: email },
+      });
+
+      // If found by email, update the clerkUserId
+      if (user) {
+        user = await db.user.update({
+          where: { email: email },
+          data: { clerkUserId: userId },
+        });
+      } else {
+        // If user doesn't exist at all, create new
+        user = await db.user.create({
+          data: {
+            clerkUserId: userId,
+            email: email,
+            name: `${clerkUser.firstName || ""} ${clerkUser.lastName || ""}`.trim(),
+            imageUrl: clerkUser.imageUrl,
+            skills: [],
+          },
+        });
+      }
+    }
+
+    // Now get the assessments
     const assessments = await db.assessment.findMany({
       where: {
         userId: user.id,
@@ -150,7 +206,7 @@ export async function getAssessments() {
 
     return assessments;
   } catch (error) {
-    console.error("Error fetching assessments:", error);
-    throw new Error("Failed to fetch assessments");
+    console.error("Error in getAssessments:", error);
+    throw new Error(error.message || "Failed to fetch assessments");
   }
 }
