@@ -1,20 +1,20 @@
 import { NextResponse } from "next/server";
-import { auth } from "@clerk/nextjs";
+import { currentUser } from "@clerk/nextjs";
 import { db } from "@/lib/prisma";
 
 export async function POST(req) {
   try {
-    const { userId } = auth();
-    if (!userId) {
+    const user = await currentUser();
+    if (!user) {
       return new NextResponse("Unauthorized", { status: 401 });
     }
 
     const body = await req.json();
     const { industry, skills } = body;
 
-    const user = await db.user.update({
+    const updatedUser = await db.user.update({
       where: {
-        clerkUserId: userId,
+        clerkUserId: user.id,
       },
       data: {
         industry,
@@ -22,7 +22,7 @@ export async function POST(req) {
       },
     });
 
-    return NextResponse.json(user);
+    return NextResponse.json(updatedUser);
   } catch (error) {
     console.error("[PROFILE_POST]", error);
     return new NextResponse("Internal Error", { status: 500 });
